@@ -144,6 +144,24 @@ data class DocumentResubmitted(
     val previousFailureReason: String,
     val resubmittedAt: Instant
 ) : DomainEvent
+
+// 2-way 인증 요청 (API 발급시)
+data class TwoWayAuthRequired(
+    val documentId: DocumentId,
+    val consentId: ConsentId,
+    val transactionId: String,      // 외부 API 트랜잭션 ID
+    val jti: String,                 // 2차 요청용 토큰
+    val authUrl: String,             // 본인인증 URL (카카오, 금융기관 등)
+    val requiredAt: Instant
+) : DomainEvent
+
+// 사용자 본인인증 완료
+data class UserAuthenticated(
+    val documentId: DocumentId,
+    val consentId: ConsentId,
+    val authResult: String,
+    val authenticatedAt: Instant
+) : DomainEvent
 ```
 
 ## 상태 전이도
@@ -157,23 +175,39 @@ DRAFT → SUBMITTED
 ### Document 상태 전이
 
 **[API_ISSUED: 외부 API 자동 발급]**
+
+*일반 플로우:*
 ```
 REQUESTED
     ↓
-PROCESSING (10초 ~ 3분 소요)
+PROCESSING (외부 API 호출)
     ↓
     ├─→ COMPLETED (성공)
-    └─→ FAILED (실패)
-           ↓
-       재제출
-           ↓
-       REQUESTED
+    └─→ FAILED (실패) → 재제출 → REQUESTED
+```
+
+*2-way 인증 플로우:*
+```
+REQUESTED
+    ↓
+PROCESSING (1차 API 호출)
+    ↓
+TWO_WAY_AUTH_REQUIRED (본인인증 대기)
+    ↓
+사용자 인증 (카카오, 금융기관 등)
+    ↓
+PROCESSING (2차 API 호출)
+    ↓
+    ├─→ COMPLETED (성공)
+    └─→ FAILED (실패) → 재제출 → REQUESTED
 ```
 
 **[USER_UPLOADED: 사용자 직접 업로드]**
 ```
 REQUESTED → COMPLETED (즉시)
 ```
+
+**참고:** 상태는 이벤트 스트림에서 계산됩니다. 실제 DB에는 이벤트만 저장하고, 상태는 조회 시 이벤트를 replay하여 도출합니다.
 
 ## Pass-Through 플로우
 
@@ -201,7 +235,38 @@ REQUESTED → COMPLETED (즉시)
      → 이벤트: DocumentResubmitted 발행
 ```
 
-### 플로우 B: 사용자 업로드 (동기)
+### 플로우 B: API 자동 발급 with 2-way 인증 (비동기)
+
+```
+1. 사용자: 동의서 제출
+   → Consent: DRAFT → SUBMITTED
+   → 이벤트: ConsentSubmitted 발행
+
+2. Document Handler: ConsentSubmitted 이벤트 구독
+   → Document 생성 (REQUESTED, API_ISSUED)
+   → 이벤트: DocumentRequested 발행
+
+3. External API Handler: 1차 API 호출
+   → 이벤트: TwoWayAuthRequired 발행
+   → 본인인증 URL 전달 (카카오, 금융기관 등)
+
+4. 사용자: 외부 인증 완료
+   → 이벤트: UserAuthenticated 발행
+
+5. External API Handler: 2차 API 호출
+   → Document: PROCESSING
+
+6-a. 성공: Document: COMPLETED
+     → 이벤트: DocumentIssued 발행
+
+6-b. 실패: Document: FAILED
+     → 이벤트: DocumentIssueFailed 발행
+     → 운영자 재처리
+```
+
+**핵심:** 1차 요청 후 2-way 인증 대기 중에도 Consent는 SUBMITTED 상태 유지. 사용자는 다른 작업 가능.
+
+### 플로우 C: 사용자 업로드 (동기)
 
 ```
 1. 사용자: 동의서 제출 + 서류 사진 업로드
@@ -214,7 +279,7 @@ REQUESTED → COMPLETED (즉시)
    → 이벤트: DocumentUploaded 발행
 ```
 
-**핵심**: Consent는 Document 처리 과정과 완전히 무관합니다. API 발급 실패 또는 업로드 여부와 상관없이 Consent는 SUBMITTED 상태를 유지합니다.
+**핵심**: Consent는 Document 처리 과정과 완전히 무관합니다. API 발급 실패, 2-way 인증 대기, 업로드 여부와 상관없이 Consent는 SUBMITTED 상태를 유지합니다.
 
 ## 비즈니스 규칙
 
@@ -248,3 +313,10 @@ REQUESTED → COMPLETED (즉시)
 - 대법원: 가족관계증명서
 - API 호출 시간: 10초 ~ 3분
 - 비동기 처리로 사용자는 대기하지 않음
+
+### 7. 2-way 인증 처리 (간편발급)
+- 외부 API는 본인인증을 위해 2-way 인증 필요
+- **1차 요청**: 서류 발급 요청 → `TwoWayAuthRequired` 이벤트
+- **사용자 인증**: 카카오, 금융기관 등에서 본인인증
+- **2차 요청**: 인증 완료 후 실제 서류 발급
+- 인증 대기 중에도 Consent는 SUBMITTED 상태 유지 (Pass-Through)

@@ -158,14 +158,28 @@ ConsentSubmitted
 
 ### 5. 운영 효율화
 
-**기존:**
-- 실패 건 찾기: `SELECT * WHERE status = 'FAILED'`
-- 재시도 이력: 알 수 없음
+**기존 (데이터 중심):**
+- 실패 건 찾기: `SELECT * WHERE status = 'FAILED'` (가능)
+- 재시도 이력: 데이터는 남겼지만, 복잡한 쿼리 필요
+  ```sql
+  -- parent-child 체인을 따라 전체 이력 조회
+  WITH RECURSIVE history AS (...)
+  ```
+- 문제: **"왜 실패했는가"**, **"몇 번째 재시도인가"**를 파악하려면 여러 레코드를 직접 분석
+- 상태만 보면 맥락을 알 수 없음
 
-**EDA:**
+**EDA (이벤트 중심):**
 - 실패 건: `DocumentIssueFailed` 이벤트 조회
-- 재시도 이력: 전체 이벤트 스트림 확인
-- 실패 원인 변화 추적
+- 재시도 이력: 이벤트 스트림을 시간순으로 읽으면 전체 스토리 파악
+  ```
+  [t=0] DocumentRequested
+  [t=10] DocumentIssueFailed (reason: "본인인증 실패")
+  [t=30] DocumentResubmitted
+  [t=31] TwoWayAuthRequired
+  [t=50] UserAuthenticated
+  [t=60] DocumentIssued
+  ```
+- 장점: 각 단계의 **맥락**(왜, 언제, 어떻게)이 이벤트에 포함
 
 ## 결론
 
