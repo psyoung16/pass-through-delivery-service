@@ -34,22 +34,4 @@ data class Member(
      * 도메인 식별자
      */
     fun memberId(): MemberId = MemberId(id)
-
-    /**
-     * 연락처 정보 업데이트
-     */
-    fun updateContactInfo(newContactInfo: ContactInfo): Member =
-        copy(contactInfo = newContactInfo)
-
-    /**
-     * 권리 내역 추가
-     */
-    fun addPropertyRight(propertyRight: PropertyRight): Member =
-        copy(propertyRights = propertyRights + propertyRight)
-
-    /**
-     * 권리 내역 제거
-     */
-    fun removePropertyRight(propertyRight: PropertyRight): Member =
-        copy(propertyRights = propertyRights - propertyRight)
 }
