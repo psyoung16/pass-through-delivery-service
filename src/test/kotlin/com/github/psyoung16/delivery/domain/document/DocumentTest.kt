@@ -11,90 +11,242 @@ import io.kotest.matchers.types.shouldBeInstanceOf
 
 class DocumentTest : DescribeSpec({
 
-    describe("유저가 직접 서류를 첨부하면") {
+    describe("시나리오 1: 사용자가 직접 서류를 업로드한다") {
         val documentId = DocumentId(1L)
         val consentId = ConsentId(100L)
         val memberId = MemberId(200L)
         val documentType = DocumentType.RESIDENT_REGISTRATION
         val issuanceMethod = IssuanceMethod.USER_UPLOADED
 
-        val (document, _) = Document.create(
-            id = documentId,
-            consentId = consentId,
-            memberId = memberId,
-            documentType = documentType,
-            issuanceMethod = issuanceMethod
-        )
+        context("서류 발급을 요청하고") {
+            val (document, event) = Document.create(
+                id = documentId,
+                consentId = consentId,
+                memberId = memberId,
+                documentType = documentType,
+                issuanceMethod = issuanceMethod
+            )
 
-        val fileUrl = "https://s3.amazonaws.com/documents/123.pdf"
-        val (updatedDocument, uploadEvent) = document.uploadFile(fileUrl)
+            it("DocumentRequested 이벤트가 발행된다") {
+                event.shouldBeInstanceOf<DocumentRequested>()
+                event.documentId shouldBe documentId
+                event.issuanceMethod shouldBe issuanceMethod
+            }
 
-        it("DocumentUploaded 이벤트가 발행된다") {
-            uploadEvent.shouldBeInstanceOf<DocumentUploaded>()
-            uploadEvent.documentId shouldBe documentId
-            uploadEvent.fileUrl shouldBe fileUrl
-        }
+            it("상태는 REQUESTED이다") {
+                document.status() shouldBe DocumentStatus.REQUESTED
+            }
 
-        it("상태는 COMPLETED이다") {
-            updatedDocument.status() shouldBe DocumentStatus.COMPLETED
+            context("파일을 첨부하면") {
+                val fileUrl = "https://s3.amazonaws.com/documents/123.pdf"
+                val (updatedDocument, uploadEvent) = document.uploadFile(fileUrl)
+
+                it("DocumentUploaded 이벤트가 발행된다") {
+                    uploadEvent.shouldBeInstanceOf<DocumentUploaded>()
+                    uploadEvent.documentId shouldBe documentId
+                    uploadEvent.fileUrl shouldBe fileUrl
+                }
+
+                it("상태는 COMPLETED이다") {
+                    updatedDocument.status() shouldBe DocumentStatus.COMPLETED
+                }
+            }
         }
     }
 
-    describe("서류 발급을 요청하면") {
-        val documentId = DocumentId(1L)
+    describe("시나리오 2: API로 서류를 자동 발급받는다 (정상)") {
+        val documentId = DocumentId(2L)
         val consentId = ConsentId(100L)
         val memberId = MemberId(200L)
         val documentType = DocumentType.RESIDENT_REGISTRATION
         val issuanceMethod = IssuanceMethod.API_ISSUED
 
-        val (document, event) = Document.create(
-            id = documentId,
-            consentId = consentId,
-            memberId = memberId,
-            documentType = documentType,
-            issuanceMethod = issuanceMethod
-        )
+        context("서류 발급을 요청하고") {
+            val (document, event) = Document.create(
+                id = documentId,
+                consentId = consentId,
+                memberId = memberId,
+                documentType = documentType,
+                issuanceMethod = issuanceMethod
+            )
 
-        it("DocumentRequested 이벤트가 발행된다") {
-            event.shouldBeInstanceOf<DocumentRequested>()
-            event.documentId shouldBe documentId
-            event.consentId shouldBe consentId
-            event.memberId shouldBe memberId
-            event.documentType shouldBe documentType
-            event.issuanceMethod shouldBe issuanceMethod
-        }
+            it("DocumentRequested 이벤트가 발행된다") {
+                event.shouldBeInstanceOf<DocumentRequested>()
+                event.documentId shouldBe documentId
+                event.consentId shouldBe consentId
+                event.memberId shouldBe memberId
+                event.documentType shouldBe documentType
+                event.issuanceMethod shouldBe issuanceMethod
+            }
 
-        it("상태는 REQUESTED이다") {
-            document.status() shouldBe DocumentStatus.REQUESTED
+            it("상태는 REQUESTED이다") {
+                document.status() shouldBe DocumentStatus.REQUESTED
+            }
+
+            context("외부 기관에 발급을 요청하면") {
+                // TODO: Document.startProcessing() 메서드 구현
+                // TODO: ProcessingStarted 이벤트 구현
+
+                it("ProcessingStarted 이벤트가 발행된다") {
+                    // TODO: 이벤트 발행 검증
+                }
+
+                it("상태는 PROCESSING이다") {
+                    // TODO: 상태 검증
+                }
+
+                context("외부 기관에서 성공적으로 발급하면") {
+                    // 비즈니스 규칙: 타임아웃 발생(2-3초 응답 없음) = 성공으로 간주
+                    // TODO: Document.issueDocument() 메서드 구현
+                    // TODO: DocumentIssued 이벤트 구현
+
+                    it("DocumentIssued 이벤트가 발행된다") {
+                        // TODO: 이벤트 발행 검증
+                    }
+
+                    it("상태는 COMPLETED이다") {
+                        // TODO: 상태 검증
+                    }
+                }
+            }
         }
     }
 
-    describe("서류 발급 요청 후 외부 기관에서 2차 인증을 요구하면") {
-        val documentId = DocumentId(1L)
+    describe("시나리오 3: API 발급 시 2차 인증이 필요하다") {
+        val documentId = DocumentId(3L)
         val consentId = ConsentId(100L)
         val memberId = MemberId(200L)
         val documentType = DocumentType.RESIDENT_REGISTRATION
         val issuanceMethod = IssuanceMethod.API_ISSUED
 
-        val (document, _) = Document.create(
-            id = documentId,
-            consentId = consentId,
-            memberId = memberId,
-            documentType = documentType,
-            issuanceMethod = issuanceMethod
-        )
+        context("서류 발급을 요청하고") {
+            val (document, _) = Document.create(
+                id = documentId,
+                consentId = consentId,
+                memberId = memberId,
+                documentType = documentType,
+                issuanceMethod = issuanceMethod
+            )
 
-        val reason = "본인 인증 필요"
-        val (updatedDocument, authEvent) = document.requireTwoWayAuth(reason)
+            context("외부 기관에서 2차 인증을 요구하면") {
+                val reason = "본인 인증 필요"
+                val (authRequiredDocument, authEvent) = document.requireTwoWayAuth(reason)
 
-        it("TwoWayAuthRequired 이벤트가 발행된다") {
-            authEvent.shouldBeInstanceOf<TwoWayAuthRequired>()
-            authEvent.documentId shouldBe documentId
-            authEvent.reason shouldBe reason
+                it("TwoWayAuthRequired 이벤트가 발행된다") {
+                    authEvent.shouldBeInstanceOf<TwoWayAuthRequired>()
+                    authEvent.documentId shouldBe documentId
+                    authEvent.reason shouldBe reason
+                }
+
+                it("상태는 TWO_WAY_AUTH_REQUIRED이다") {
+                    authRequiredDocument.status() shouldBe DocumentStatus.TWO_WAY_AUTH_REQUIRED
+                }
+
+                context("사용자가 인증을 완료하고 재시도하면") {
+                    // 비즈니스 규칙: 사용자가 외부 인증 완료 → 시스템이 자동 재시도
+                    // TODO: Document.retryProcessing() 메서드 구현
+                    // TODO: ProcessingRetried 이벤트 구현
+
+                    it("ProcessingRetried 이벤트가 발행된다") {
+                        // TODO: 이벤트 발행 검증
+                    }
+
+                    it("상태는 PROCESSING이다") {
+                        // TODO: 상태 검증 (TWO_WAY_AUTH_REQUIRED → PROCESSING)
+                    }
+
+                    context("재시도 후 성공적으로 발급하면") {
+                        // TODO: Document.issueDocument() 메서드 구현
+                        // TODO: DocumentIssued 이벤트 구현
+
+                        it("DocumentIssued 이벤트가 발행된다") {
+                            // TODO: 이벤트 발행 검증
+                        }
+
+                        it("상태는 COMPLETED이다") {
+                            // TODO: 상태 검증
+                        }
+                    }
+                }
+            }
         }
+    }
 
-        it("상태는 TWO_WAY_AUTH_REQUIRED이다") {
-            updatedDocument.status() shouldBe DocumentStatus.TWO_WAY_AUTH_REQUIRED
+    describe("시나리오 4: API 발급이 실패한다") {
+        val documentId = DocumentId(4L)
+        val consentId = ConsentId(100L)
+        val memberId = MemberId(200L)
+        val documentType = DocumentType.RESIDENT_REGISTRATION
+        val issuanceMethod = IssuanceMethod.API_ISSUED
+
+        context("서류 발급을 요청하고") {
+            val (document, _) = Document.create(
+                id = documentId,
+                consentId = consentId,
+                memberId = memberId,
+                documentType = documentType,
+                issuanceMethod = issuanceMethod
+            )
+
+            context("외부 기관에서 발급을 거부하면") {
+                // 비즈니스 규칙: 즉시 응답(200ms 이내) + 실패 사유 포함
+                // TODO: Document.failIssuance() 메서드 구현
+                // TODO: DocumentIssueFailed 이벤트 구현
+
+                it("DocumentIssueFailed 이벤트가 발행된다") {
+                    // TODO: 이벤트 발행 검증
+                    // TODO: 실패 사유 검증
+                }
+
+                it("상태는 FAILED이다") {
+                    // TODO: 상태 검증
+                }
+            }
+        }
+    }
+
+    describe("시나리오 5: 2차 인증 후에도 발급이 실패한다") {
+        val documentId = DocumentId(5L)
+        val consentId = ConsentId(100L)
+        val memberId = MemberId(200L)
+        val documentType = DocumentType.RESIDENT_REGISTRATION
+        val issuanceMethod = IssuanceMethod.API_ISSUED
+
+        context("서류 발급을 요청하고") {
+            val (document, _) = Document.create(
+                id = documentId,
+                consentId = consentId,
+                memberId = memberId,
+                documentType = documentType,
+                issuanceMethod = issuanceMethod
+            )
+
+            context("외부 기관에서 2차 인증을 요구하면") {
+                val reason = "본인 인증 필요"
+                val (authRequiredDocument, _) = document.requireTwoWayAuth(reason)
+
+                it("상태는 TWO_WAY_AUTH_REQUIRED이다") {
+                    authRequiredDocument.status() shouldBe DocumentStatus.TWO_WAY_AUTH_REQUIRED
+                }
+
+                context("사용자가 인증을 완료하고 재시도했지만") {
+                    // TODO: Document.retryProcessing() 메서드 구현
+                    // TODO: ProcessingRetried 이벤트 구현
+
+                    context("외부 기관에서 발급을 거부하면") {
+                        // TODO: Document.failIssuance() 메서드 구현
+                        // TODO: DocumentIssueFailed 이벤트 구현
+
+                        it("DocumentIssueFailed 이벤트가 발행된다") {
+                            // TODO: 이벤트 발행 검증
+                        }
+
+                        it("상태는 FAILED이다") {
+                            // TODO: 상태 검증
+                        }
+                    }
+                }
+            }
         }
     }
 })
