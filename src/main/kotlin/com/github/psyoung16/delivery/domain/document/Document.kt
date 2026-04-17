@@ -2,8 +2,12 @@ package com.github.psyoung16.delivery.domain.document
 
 import com.github.psyoung16.delivery.domain.consent.ConsentId
 import com.github.psyoung16.delivery.domain.document.events.DocumentDomainEvent
+import com.github.psyoung16.delivery.domain.document.events.DocumentIssueFailed
+import com.github.psyoung16.delivery.domain.document.events.DocumentIssued
 import com.github.psyoung16.delivery.domain.document.events.DocumentRequested
 import com.github.psyoung16.delivery.domain.document.events.DocumentUploaded
+import com.github.psyoung16.delivery.domain.document.events.ProcessingRetried
+import com.github.psyoung16.delivery.domain.document.events.ProcessingStarted
 import com.github.psyoung16.delivery.domain.document.events.TwoWayAuthRequired
 import com.github.psyoung16.delivery.domain.member.MemberId
 
@@ -62,6 +66,10 @@ data class Document(
                 is DocumentRequested -> DocumentStatus.REQUESTED
                 is DocumentUploaded -> DocumentStatus.COMPLETED
                 is TwoWayAuthRequired -> DocumentStatus.TWO_WAY_AUTH_REQUIRED
+                is ProcessingStarted -> DocumentStatus.PROCESSING
+                is ProcessingRetried -> DocumentStatus.PROCESSING
+                is DocumentIssued -> DocumentStatus.COMPLETED
+                is DocumentIssueFailed -> DocumentStatus.FAILED
             }
         }
     }
@@ -81,12 +89,59 @@ data class Document(
     }
 
     /**
+     * 외부 기관에 서류 발급 처리 시작
+     */
+    fun startProcessing(): Pair<Document, ProcessingStarted> {
+        val event = ProcessingStarted(
+            documentId = id
+        )
+        val newDocument = replay(events + event)
+        return Pair(newDocument, event)
+    }
+
+    /**
+     * 외부 기관에서 서류 발급 완료
+     */
+    fun issueDocument(fileUrl: String): Pair<Document, DocumentIssued> {
+        val event = DocumentIssued(
+            documentId = id,
+            fileUrl = fileUrl
+        )
+        val newDocument = replay(events + event)
+        return Pair(newDocument, event)
+    }
+
+    /**
      * 외부 기관에서 2차 인증 요구
      */
     fun requireTwoWayAuth(reason: String): Pair<Document, TwoWayAuthRequired> {
         val event = TwoWayAuthRequired(
             documentId = id,
             reason = reason
+        )
+        val newDocument = replay(events + event)
+        return Pair(newDocument, event)
+    }
+
+    /**
+     * 2차 인증 완료 후 재시도
+     */
+    fun retryProcessing(): Pair<Document, ProcessingRetried> {
+        val event = ProcessingRetried(
+            documentId = id
+        )
+        val newDocument = replay(events + event)
+        return Pair(newDocument, event)
+    }
+
+    /**
+     * 외부 기관에서 서류 발급 실패
+     */
+    fun failIssuance(reason: String, failureType: FailureType): Pair<Document, DocumentIssueFailed> {
+        val event = DocumentIssueFailed(
+            documentId = id,
+            reason = reason,
+            failureType = failureType
         )
         val newDocument = replay(events + event)
         return Pair(newDocument, event)

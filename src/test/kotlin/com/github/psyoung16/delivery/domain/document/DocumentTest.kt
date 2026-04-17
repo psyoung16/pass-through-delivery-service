@@ -1,8 +1,12 @@
 package com.github.psyoung16.delivery.domain.document
 
 import com.github.psyoung16.delivery.domain.consent.ConsentId
+import com.github.psyoung16.delivery.domain.document.events.DocumentIssueFailed
+import com.github.psyoung16.delivery.domain.document.events.DocumentIssued
 import com.github.psyoung16.delivery.domain.document.events.DocumentRequested
 import com.github.psyoung16.delivery.domain.document.events.DocumentUploaded
+import com.github.psyoung16.delivery.domain.document.events.ProcessingRetried
+import com.github.psyoung16.delivery.domain.document.events.ProcessingStarted
 import com.github.psyoung16.delivery.domain.document.events.TwoWayAuthRequired
 import com.github.psyoung16.delivery.domain.member.MemberId
 import io.kotest.core.spec.style.DescribeSpec
@@ -84,28 +88,30 @@ class DocumentTest : DescribeSpec({
             }
 
             context("외부 기관에 발급을 요청하면") {
-                // TODO: Document.startProcessing() 메서드 구현
-                // TODO: ProcessingStarted 이벤트 구현
+                val (processingDocument, processingEvent) = document.startProcessing()
 
                 it("ProcessingStarted 이벤트가 발행된다") {
-                    // TODO: 이벤트 발행 검증
+                    processingEvent.shouldBeInstanceOf<ProcessingStarted>()
+                    processingEvent.documentId shouldBe documentId
                 }
 
                 it("상태는 PROCESSING이다") {
-                    // TODO: 상태 검증
+                    processingDocument.status() shouldBe DocumentStatus.PROCESSING
                 }
 
                 context("외부 기관에서 성공적으로 발급하면") {
                     // 비즈니스 규칙: 타임아웃 발생(2-3초 응답 없음) = 성공으로 간주
-                    // TODO: Document.issueDocument() 메서드 구현
-                    // TODO: DocumentIssued 이벤트 구현
+                    val fileUrl = "https://external-api.com/documents/issued-123.pdf"
+                    val (issuedDocument, issuedEvent) = processingDocument.issueDocument(fileUrl)
 
                     it("DocumentIssued 이벤트가 발행된다") {
-                        // TODO: 이벤트 발행 검증
+                        issuedEvent.shouldBeInstanceOf<DocumentIssued>()
+                        issuedEvent.documentId shouldBe documentId
+                        issuedEvent.fileUrl shouldBe fileUrl
                     }
 
                     it("상태는 COMPLETED이다") {
-                        // TODO: 상태 검증
+                        issuedDocument.status() shouldBe DocumentStatus.COMPLETED
                     }
                 }
             }
@@ -144,27 +150,29 @@ class DocumentTest : DescribeSpec({
 
                 context("사용자가 인증을 완료하고 재시도하면") {
                     // 비즈니스 규칙: 사용자가 외부 인증 완료 → 시스템이 자동 재시도
-                    // TODO: Document.retryProcessing() 메서드 구현
-                    // TODO: ProcessingRetried 이벤트 구현
+                    val (retriedDocument, retriedEvent) = authRequiredDocument.retryProcessing()
 
                     it("ProcessingRetried 이벤트가 발행된다") {
-                        // TODO: 이벤트 발행 검증
+                        retriedEvent.shouldBeInstanceOf<ProcessingRetried>()
+                        retriedEvent.documentId shouldBe documentId
                     }
 
                     it("상태는 PROCESSING이다") {
-                        // TODO: 상태 검증 (TWO_WAY_AUTH_REQUIRED → PROCESSING)
+                        retriedDocument.status() shouldBe DocumentStatus.PROCESSING
                     }
 
                     context("재시도 후 성공적으로 발급하면") {
-                        // TODO: Document.issueDocument() 메서드 구현
-                        // TODO: DocumentIssued 이벤트 구현
+                        val fileUrl = "https://external-api.com/documents/retried-issued-123.pdf"
+                        val (issuedDocument, issuedEvent) = retriedDocument.issueDocument(fileUrl)
 
                         it("DocumentIssued 이벤트가 발행된다") {
-                            // TODO: 이벤트 발행 검증
+                            issuedEvent.shouldBeInstanceOf<DocumentIssued>()
+                            issuedEvent.documentId shouldBe documentId
+                            issuedEvent.fileUrl shouldBe fileUrl
                         }
 
                         it("상태는 COMPLETED이다") {
-                            // TODO: 상태 검증
+                            issuedDocument.status() shouldBe DocumentStatus.COMPLETED
                         }
                     }
                 }
@@ -190,16 +198,18 @@ class DocumentTest : DescribeSpec({
 
             context("외부 기관에서 발급을 거부하면") {
                 // 비즈니스 규칙: 즉시 응답(200ms 이내) + 실패 사유 포함
-                // TODO: Document.failIssuance() 메서드 구현
-                // TODO: DocumentIssueFailed 이벤트 구현
+                val failureReason = "주민등록번호가 일치하지 않습니다"
+                val (failedDocument, failedEvent) = document.failIssuance(failureReason, FailureType.PERMANENT)
 
                 it("DocumentIssueFailed 이벤트가 발행된다") {
-                    // TODO: 이벤트 발행 검증
-                    // TODO: 실패 사유 검증
+                    failedEvent.shouldBeInstanceOf<DocumentIssueFailed>()
+                    failedEvent.documentId shouldBe documentId
+                    failedEvent.reason shouldBe failureReason
+                    failedEvent.failureType shouldBe FailureType.PERMANENT
                 }
 
                 it("상태는 FAILED이다") {
-                    // TODO: 상태 검증
+                    failedDocument.status() shouldBe DocumentStatus.FAILED
                 }
             }
         }
@@ -230,19 +240,30 @@ class DocumentTest : DescribeSpec({
                 }
 
                 context("사용자가 인증을 완료하고 재시도했지만") {
-                    // TODO: Document.retryProcessing() 메서드 구현
-                    // TODO: ProcessingRetried 이벤트 구현
+                    val (retriedDocument, retriedEvent) = authRequiredDocument.retryProcessing()
+
+                    it("ProcessingRetried 이벤트가 발행된다") {
+                        retriedEvent.shouldBeInstanceOf<ProcessingRetried>()
+                        retriedEvent.documentId shouldBe documentId
+                    }
+
+                    it("상태는 PROCESSING이다") {
+                        retriedDocument.status() shouldBe DocumentStatus.PROCESSING
+                    }
 
                     context("외부 기관에서 발급을 거부하면") {
-                        // TODO: Document.failIssuance() 메서드 구현
-                        // TODO: DocumentIssueFailed 이벤트 구현
+                        val failureReason = "외부 기관 시스템 점검 중입니다"
+                        val (failedDocument, failedEvent) = retriedDocument.failIssuance(failureReason, FailureType.RETRYABLE)
 
                         it("DocumentIssueFailed 이벤트가 발행된다") {
-                            // TODO: 이벤트 발행 검증
+                            failedEvent.shouldBeInstanceOf<DocumentIssueFailed>()
+                            failedEvent.documentId shouldBe documentId
+                            failedEvent.reason shouldBe failureReason
+                            failedEvent.failureType shouldBe FailureType.RETRYABLE
                         }
 
                         it("상태는 FAILED이다") {
-                            // TODO: 상태 검증
+                            failedDocument.status() shouldBe DocumentStatus.FAILED
                         }
                     }
                 }
