@@ -19,94 +19,73 @@
 
 ## 남은 구현 계획
 
-### 1. Infrastructure Layer - Event Store
+### 1. Infrastructure Layer - Event Store (간소화)
 
-#### 1.1 EventStore Interface
+#### 1.1 최소 구현
 ```kotlin
-interface DocumentEventStore {
-    fun save(documentId: DocumentId, event: DocumentDomainEvent)
-    fun loadEvents(documentId: DocumentId): List<DocumentDomainEvent>
+// Repository만 정의 (Spring Data JPA가 자동 구현)
+interface DocumentEventRepository : JpaRepository<DocumentEvent, Long> {
+    fun findByDocumentIdOrderByEventOrderAsc(documentId: Long): List<DocumentEvent>
 }
 ```
 
-#### 1.2 구현 옵션
-- **Option A**: In-Memory (테스트용)
-- **Option B**: RDBMS 기반 (PostgreSQL)
-  - 테이블: `document_events`
-  - 컬럼: `id`, `document_id`, `event_type`, `event_data` (JSON), `occurred_at`, `sequence`
-- **Option C**: Event Store 전용 DB (EventStoreDB - 오버엔지니어링 가능성)
+**참고**:
+- DocumentEvent Entity는 이미 구현됨 ✅
+- H2 인메모리 DB로 충분 (별도 DB 설정 불필요)
+- EventStore Service는 생략 (Repository로 직접 접근)
+- Event 직렬화/역직렬화는 나중에 필요시 추가
 
-**추천**: Option B (RDBMS) - 실무에서 가장 일반적, 포트폴리오에 적합
+### 2. Application Layer - Service (간소화 - 핵심만)
 
-#### 1.3 필요한 클래스
-- `DocumentEventJpaRepository` (JPA Repository)
-- `DocumentEventEntity` (JPA Entity)
-- `DocumentEventStoreImpl` (EventStore 구현체)
-- Event Serialization/Deserialization 로직
-
-### 2. Application Layer - Service
-
-#### 2.1 DocumentIssuanceService
+#### 2.1 DocumentIssuanceService (간단 버전)
 ```kotlin
-interface DocumentIssuanceService {
-    // 서류 발급 요청 (사용자 업로드 방식)
-    fun requestDocumentWithUpload(request: RequestDocumentCommand): DocumentId
+@Service
+class DocumentIssuanceService(
+    private val documents: MutableMap<Long, Document> = mutableMapOf() // 인메모리 저장소
+) {
+    private var currentId = 1L
 
-    // 서류 발급 요청 (API 자동 발급 방식)
-    fun requestDocumentWithApi(request: RequestDocumentCommand): DocumentId
+    // 서류 발급 요청
+    fun requestDocument(
+        consentId: ConsentId,
+        memberId: MemberId,
+        documentType: DocumentType,
+        issuanceMethod: IssuanceMethod
+    ): DocumentId {
+        val documentId = DocumentId(currentId++)
+        val (document, event) = Document.create(documentId, consentId, memberId, documentType, issuanceMethod)
+        documents[documentId.value] = document
+        return documentId
+    }
 
-    // 사용자가 직접 파일 업로드
-    fun uploadFile(documentId: DocumentId, fileUrl: String)
+    // 파일 업로드
+    fun uploadFile(documentId: DocumentId, fileUrl: String) {
+        val document = documents[documentId.value] ?: throw DocumentNotFoundException(documentId)
+        val (updatedDocument, event) = document.uploadFile(fileUrl)
+        documents[documentId.value] = updatedDocument
+    }
 
-    // 외부 API 발급 프로세스 시작 (비동기 트리거)
-    fun startApiIssuance(documentId: DocumentId)
+    // 외부 API 발급 시작
+    fun startProcessing(documentId: DocumentId) {
+        val document = documents[documentId.value] ?: throw DocumentNotFoundException(documentId)
+        val (updatedDocument, event) = document.startProcessing()
+        documents[documentId.value] = updatedDocument
+    }
 
     // 서류 조회
-    fun getDocument(documentId: DocumentId): DocumentDto
-}
-```
-
-#### 2.2 ExternalApiClient (Infrastructure)
-외부 기관 API 호출을 담당하는 클라이언트
-
-```kotlin
-interface ExternalDocumentApiClient {
-    // 서류 발급 요청
-    fun requestIssuance(request: IssuanceRequest): IssuanceResponse
-
-    // 2차 인증 후 재시도
-    fun retryWithAuth(transactionId: String, authToken: String): IssuanceResponse
-}
-```
-
-**응답 시간 기반 로직**:
-- 200ms 이내 응답 + 실패 사유 → FAILED
-- 2-3초 타임아웃 → SUCCESS (비동기 처리 중)
-- 2차 인증 필요 응답 → TWO_WAY_AUTH_REQUIRED
-
-#### 2.3 EventHandler (비동기 처리)
-Event를 구독하여 외부 API 호출 등을 처리
-
-```kotlin
-@Component
-class DocumentEventHandler(
-    private val externalApiClient: ExternalDocumentApiClient,
-    private val eventStore: DocumentEventStore
-) {
-    @EventListener
-    fun on(event: ProcessingStarted) {
-        // 비동기로 외부 API 호출
-        // 결과에 따라 DocumentIssued/TwoWayAuthRequired/DocumentIssueFailed 이벤트 발행
-    }
-
-    @EventListener
-    fun on(event: ProcessingRetried) {
-        // 2차 인증 완료 후 재시도 로직
+    fun getDocument(documentId: DocumentId): Document {
+        return documents[documentId.value] ?: throw DocumentNotFoundException(documentId)
     }
 }
 ```
 
-### 3. Presentation Layer - REST API (Optional)
+**간소화 내용**:
+- 인메모리 Map으로 Document 저장 (Repository 생략)
+- Event 발행 로직 생략 (나중에 추가)
+- ExternalApiClient Mock 생략 (Controller에서 직접 호출)
+- EventHandler 생략 (비동기 처리 나중에)
+
+### 3. Presentation Layer - Controller 연결
 
 #### 3.1 DocumentController
 ```kotlin
@@ -146,73 +125,52 @@ data class DocumentResponse(
 )
 ```
 
-### 4. 구현 순서 제안
+### 4. 구현 순서 (간소화)
 
-1. **Phase 1: Event Store (Infrastructure)**
-   - DocumentEventEntity, DocumentEventJpaRepository 생성
-   - DocumentEventStoreImpl 구현
-   - 통합 테스트 작성
+1. **Step 1: Application Service 구현** (핵심)
+   - DocumentIssuanceService 클래스 생성
+   - 인메모리 Map으로 Document 관리
+   - 기본 CRUD 메서드 구현
 
-2. **Phase 2: Application Service**
-   - DocumentIssuanceService 구현
-   - ExternalApiClient Mock 구현 (실제 API 없으므로)
-   - Service Layer 테스트 작성
+2. **Step 2: Controller와 Service 연결**
+   - DocumentController의 stub 코드를 실제 Service 호출로 변경
+   - DTO 변환 로직 추가
+   - 간단한 통합 테스트
 
-3. **Phase 3: Event Handler (비동기 처리)**
-   - Spring Event 기반 DocumentEventHandler 구현
-   - 타임아웃 로직 구현 (2-3초)
-   - 통합 테스트
-
-4. **Phase 4: REST API (선택적)**
-   - Controller 구현
-   - API 통합 테스트
-   - Swagger/OpenAPI 문서 생성
+3. **Step 3: 애플리케이션 실행 확인**
+   - Spring Boot 실행
+   - Postman/curl로 API 테스트
+   - H2 콘솔에서 데이터 확인
 
 ### 5. 기술 스택
 
-- **Framework**: Spring Boot 3.x
-- **Language**: Kotlin
-- **DB**: PostgreSQL (Event Store)
+- **Framework**: Spring Boot 3.5.8
+- **Language**: Kotlin 2.2.21
+- **DB**: H2 (in-memory)
 - **ORM**: Spring Data JPA
-- **Test**: Kotest, MockK
-- **API Doc**: SpringDoc OpenAPI (optional)
-- **Async**: Spring Events or Kotlin Coroutines
+- **Test**: Kotest
+- **Build**: Gradle Kotlin DSL
 
-### 6. 고려 사항
+### 6. 향후 확장 가능성
 
-#### 6.1 동시성 제어
-- Event Store에 저장 시 `sequence` 필드로 순서 보장
-- Optimistic Locking 고려 (version 필드)
+#### 6.1 Event 영속화 (나중에)
+- DocumentEventRepository 구현
+- Event 직렬화/역직렬화
+- Event Replay 기능
 
-#### 6.2 트랜잭션 관리
-- Event 저장과 도메인 로직은 동일 트랜잭션
-- 외부 API 호출은 별도 트랜잭션 (비동기)
+#### 6.2 비동기 처리 (나중에)
+- Spring Events 기반 Event Handler
+- ExternalApiClient Mock 구현
+- 타임아웃 로직 (2-3초)
 
-#### 6.3 보안
-- TransactionToken (UUID) 매핑으로 실제 외부 transactionId 노출 방지
-- 사용자에게는 UUID만 반환, 내부적으로 실제 ID 매핑
-
-#### 6.4 에러 처리
-- FailureType에 따른 재시도 전략
-  - RETRYABLE: 자동 재시도 (exponential backoff)
-  - PERMANENT: 재시도 중단, 사용자 액션 필요
-
-#### 6.5 모니터링
-- 각 상태별 이벤트 발행 수 추적
-- 외부 API 응답 시간 모니터링
-- 실패율 통계
-
-### 7. 포트폴리오 관점에서의 강점
-
-- **Event Sourcing**: 트렌디한 아키텍처 패턴 적용
-- **DDD**: Aggregate, Domain Event 등 전술적 패턴 활용
-- **Clean Architecture**: 계층 분리 (Domain → Application → Infrastructure → Presentation)
-- **비동기 처리**: 외부 API 타임아웃 로직, Event-Driven
-- **테스트**: BDD 스타일 도메인 테스트, 통합 테스트
-- **Kotlin**: 현대적 JVM 언어 활용
+#### 6.3 메시징 시스템 (나중에)
+- Kafka/RabbitMQ 통합
+- Saga 패턴 구현
+- 분산 트랜잭션 관리
 
 ## Next Actions
 
-1. Event Store 구현부터 시작
-2. 각 Phase별로 commit
-3. 완료 후 이 문서 삭제
+1. DocumentIssuanceService 구현 (간단 버전)
+2. DocumentController와 Service 연결
+3. 통합 테스트 및 실행 확인
+4. Git commit & push
