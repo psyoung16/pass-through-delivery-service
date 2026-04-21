@@ -3,7 +3,7 @@ package com.github.psyoung16.delivery.application.service
 import com.github.psyoung16.delivery.domain.consent.ConsentId
 import com.github.psyoung16.delivery.domain.document.*
 import com.github.psyoung16.delivery.domain.member.MemberId
-import com.github.psyoung16.delivery.infrastructure.external.ExternalApiClient
+import com.github.psyoung16.delivery.infrastructure.external.DocumentApiClientFactory
 import com.github.psyoung16.delivery.presentation.exception.DocumentNotFoundException
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Service
@@ -15,7 +15,7 @@ import org.springframework.stereotype.Service
  */
 @Service
 class DocumentIssuanceService(
-    private val externalApiClient: ExternalApiClient
+    private val apiClientFactory: DocumentApiClientFactory
 ) {
 
     private val documents: MutableMap<Long, Document> = mutableMapOf()
@@ -99,6 +99,10 @@ class DocumentIssuanceService(
     /**
      * API 자동 발급 요청 (간편인증 포함)
      *
+     * DocumentType에 따라 적절한 외부 API 클라이언트 사용
+     * - RESIDENT_REGISTRATION → 정부24 API
+     * - FAMILY_RELATIONSHIP_CERTIFICATE → 대법원 API
+     *
      * @return transactionId (외부 API에서 받은 거래 ID)
      */
     fun requestApiIssuanceWithAuth(
@@ -108,8 +112,15 @@ class DocumentIssuanceService(
         identity: String,
         easyAuthMethod: String
     ): String {
+        // Document 조회하여 타입 확인
+        val document = getDocumentOrThrow(documentId)
+        val documentType = document.documentType()
+
+        // DocumentType에 따라 적절한 API 클라이언트 선택
+        val apiClient = apiClientFactory.getClient(documentType)
+
         // 외부 API에 간편인증 요청 (500ms 소요)
-        val requestId = externalApiClient.requestEasyAuth(
+        val requestId = apiClient.requestEasyAuth(
             userName = userName,
             phoneNo = phoneNo,
             identity = identity,
@@ -127,6 +138,10 @@ class DocumentIssuanceService(
      *
      * Controller는 즉시 응답하고, 이 메서드는 백그라운드에서 실행
      * 10초~3분 걸리는 작업을 비동기로 처리
+     *
+     * DocumentType에 따라 적절한 외부 API 클라이언트 사용
+     * - RESIDENT_REGISTRATION → 정부24 API (3초)
+     * - FAMILY_RELATIONSHIP_CERTIFICATE → 대법원 API (3초)
      */
     @Async
     fun startIssuanceAsync(documentId: DocumentId, transactionId: String) {
@@ -134,13 +149,20 @@ class DocumentIssuanceService(
             // 1. 재시도 이벤트 발행
             retryProcessing(documentId)
 
-            // 2. 외부 API에 실제 발급 요청 (10초~3분 소요)
-            val fileUrl = externalApiClient.issueDocument(transactionId)
+            // 2. Document 조회하여 타입 확인
+            val document = getDocumentOrThrow(documentId)
+            val documentType = document.documentType()
 
-            // 3. 발급 완료 이벤트 발행
+            // 3. DocumentType에 따라 적절한 API 클라이언트 선택
+            val apiClient = apiClientFactory.getClient(documentType)
+
+            // 4. 외부 API에 실제 발급 요청 (10초~3분 소요)
+            val fileUrl = apiClient.issueDocument(transactionId)
+
+            // 5. 발급 완료 이벤트 발행
             issueDocument(documentId, fileUrl)
         } catch (e: Exception) {
-            // 4. 실패 시 이벤트 발행
+            // 6. 실패 시 이벤트 발행
             failIssuance(documentId, e.message ?: "Unknown error", FailureType.PERMANENT)
         }
     }
