@@ -9,7 +9,10 @@
 **1. 외부 API 자동 발급** (간편발급)
 - **2-way 인증 플로우**: 1차 요청 → 외부 인증(카카오, 금융기관) → 2차 요청
 - 본인인증 후 실제 서류 발급
-- **10초 ~ 3분 소요**
+- **서류 타입별 외부 API 호출**:
+  - 주민등록등본 → 정부24 API
+  - 가족관계증명서 → 대법원 API
+- **3초 이상 소요** (실제 운영: 10초~3분)
 
 ### 문제점 (API 자동 발급)
 
@@ -25,13 +28,22 @@
 
 **Pass-Through 비동기 파이프라인**
 - 동의서 제출과 첨부서류 발급을 분리하여 독립적으로 처리
-- 외부 API 장애 시에도 동의서 접수는 완료 -> 필요시 재제출을 통해 발급
+- 사용자에게 즉시 응답 (202 ACCEPTED), 백그라운드에서 처리
+- 외부 API 장애 시에도 동의서 접수는 완료
 - 첨부서류는 백그라운드에서 병렬 발급
+- **사용자는 폴링하지 않음**: "처리되었습니다" 응답만 받고 종료
+- **실패 시**: 운영진이 나중에 확인하고 재처리
 
 **이벤트 기반 히스토리 추적**
 - 첨부서류 발급의 전체 라이프사이클을 이벤트로 기록
 - `요청 → 실패 → 재제출 → 완료` 과정을 완전히 추적
 - 운영자의 실패 건 재처리 업무 효율화
+
+**서류 타입별 외부 API 클라이언트**
+- Factory 패턴으로 DocumentType에 따라 적절한 API 클라이언트 선택
+- `Gov24ApiClient`: 주민등록등본 발급 (정부24 API)
+- `CourtApiClient`: 가족관계증명서 발급 (대법원 API)
+- 각 서류 타입마다 다른 외부 API 호출
 
 ## 핵심 기술
 
@@ -104,14 +116,15 @@ const res1 = await fetch('/api/documents/issuance', {
 // Step 2: 사용자가 카카오톡에서 인증 완료 (30초~1분 소요)
 // → 프론트엔드에서 "카카오톡에서 인증을 완료해주세요" 안내
 
-// Step 3: 인증 완료 후 실제 발급
+// Step 3: 인증 완료 후 실제 발급 (Pass-Through: 즉시 응답)
 const res2 = await fetch('/api/documents/1/complete', {
   method: 'POST',
   body: JSON.stringify({
     requestId: 'ext-123'
   })
 })
-// Response: { status: 'COMPLETED', fileUrl: 'https://...' }
+// Response: { status: 'PROCESSING', fileUrl: null, failureReason: null }
+// HTTP 202 Accepted - 백그라운드에서 처리 중, 사용자는 더 이상 폴링하지 않음
 ```
 
 ### 설계 고려사항
