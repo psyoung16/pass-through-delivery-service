@@ -55,6 +55,65 @@ class DocumentController(
     }
 
     /**
+     * API 자동 발급 요청 (2-way 인증 시작)
+     *
+     * 보안: 실제 운영에서는 외부 transactionId를 UUID로 매핑하여 노출 방지 필요 (현재는 스킵)
+     */
+    @PostMapping("/issuance")
+    @ResponseStatus(HttpStatus.CREATED)
+    fun requestApiIssuance(
+        @RequestBody request: com.github.psyoung16.delivery.presentation.dto.ApiIssuanceRequest
+    ): com.github.psyoung16.delivery.presentation.dto.ApiIssuanceResponse {
+        // TODO: Service 메서드 호출 (ExternalApiClient 사용)
+        // 1. Document 생성
+        val documentId = documentIssuanceService.requestDocument(
+            consentId = ConsentId(request.consentId),
+            memberId = MemberId(request.memberId),
+            documentType = request.documentType,
+            issuanceMethod = com.github.psyoung16.delivery.domain.document.IssuanceMethod.API_ISSUED
+        )
+
+        // 2. 외부 API에 간편인증 요청 (Mock)
+        val requestId = "ext-request-${System.currentTimeMillis()}"
+
+        // 3. TwoWayAuthRequired 이벤트 발행
+        documentIssuanceService.requireTwoWayAuth(documentId, "${request.easyAuthMethod} 인증 필요")
+
+        return com.github.psyoung16.delivery.presentation.dto.ApiIssuanceResponse(
+            documentId = documentId.value,
+            status = "TWO_WAY_AUTH_REQUIRED",
+            requestId = requestId,
+            message = "${request.easyAuthMethod} 인증을 진행해주세요"
+        )
+    }
+
+    /**
+     * 2-way 인증 완료 후 실제 발급
+     */
+    @PostMapping("/{id}/complete")
+    @ResponseStatus(HttpStatus.OK)
+    fun completeIssuance(
+        @PathVariable id: Long,
+        @RequestBody request: com.github.psyoung16.delivery.presentation.dto.CompleteIssuanceRequest
+    ): com.github.psyoung16.delivery.presentation.dto.CompleteIssuanceResponse {
+        // TODO: Service 메서드 호출 (ExternalApiClient 사용)
+        // 1. 재시도 이벤트 발행
+        documentIssuanceService.retryProcessing(DocumentId(id))
+
+        // 2. 외부 API에 실제 발급 요청 (Mock)
+        val fileUrl = "https://external-api.com/documents/issued-${System.currentTimeMillis()}.pdf"
+
+        // 3. 발급 완료 이벤트 발행
+        documentIssuanceService.issueDocument(DocumentId(id), fileUrl)
+
+        return com.github.psyoung16.delivery.presentation.dto.CompleteIssuanceResponse(
+            status = "COMPLETED",
+            fileUrl = fileUrl,
+            failureReason = null
+        )
+    }
+
+    /**
      * 서류 조회
      */
     @GetMapping("/{id}")
