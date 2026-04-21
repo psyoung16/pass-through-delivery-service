@@ -98,7 +98,8 @@ class DocumentController(
      * 2-way 인증 완료 후 실제 발급 (Pass-Through 비동기)
      *
      * 즉시 응답하고, 백그라운드에서 10초~3분 걸리는 발급 작업 수행
-     * 사용자는 GET /api/documents/{id}로 폴링하여 결과 확인
+     * 사용자는 "처리되었습니다" 응답만 받고 끝
+     * 실패 시 운영진이 나중에 확인하고 재처리
      */
     @PostMapping("/{id}/complete")
     @ResponseStatus(HttpStatus.ACCEPTED)
