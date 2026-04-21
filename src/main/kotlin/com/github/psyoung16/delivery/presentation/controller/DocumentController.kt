@@ -1,12 +1,12 @@
 package com.github.psyoung16.delivery.presentation.controller
 
+import com.github.psyoung16.delivery.application.service.DocumentIssuanceService
+import com.github.psyoung16.delivery.domain.consent.ConsentId
 import com.github.psyoung16.delivery.domain.document.DocumentId
-import com.github.psyoung16.delivery.domain.document.DocumentStatus
+import com.github.psyoung16.delivery.domain.member.MemberId
 import com.github.psyoung16.delivery.presentation.dto.CreateDocumentResponse
 import com.github.psyoung16.delivery.presentation.dto.DocumentResponse
-import com.github.psyoung16.delivery.presentation.dto.RequestDocumentRequest
-import com.github.psyoung16.delivery.presentation.dto.RetryRequest
-import com.github.psyoung16.delivery.presentation.dto.UploadFileRequest
+import com.github.psyoung16.delivery.presentation.dto.UploadDocumentRequest
 import com.github.psyoung16.delivery.presentation.exception.DocumentNotFoundException
 import com.github.psyoung16.delivery.presentation.exception.ErrorResponse
 import com.github.psyoung16.delivery.presentation.exception.InvalidDocumentStateException
@@ -25,35 +25,33 @@ import org.springframework.web.bind.annotation.RestController
  */
 @RestController
 @RequestMapping("/api/documents")
-class DocumentController {
+class DocumentController(
+    private val documentIssuanceService: DocumentIssuanceService
+) {
 
     /**
-     * 서류 발급 요청
+     * 사용자 직접 업로드 (원샷)
      */
-    @PostMapping
+    @PostMapping("/upload")
     @ResponseStatus(HttpStatus.CREATED)
-    fun requestDocument(
-        @RequestBody request: RequestDocumentRequest
+    fun uploadDocument(
+        @RequestBody request: UploadDocumentRequest
     ): CreateDocumentResponse {
-        // 성공 케이스: documentId 반환
-        return CreateDocumentResponse(documentId = 1L)
-    }
+        // 1. Document 생성
+        val documentId = documentIssuanceService.requestDocument(
+            consentId = ConsentId(request.consentId),
+            memberId = MemberId(request.memberId),
+            documentType = request.documentType,
+            issuanceMethod = com.github.psyoung16.delivery.domain.document.IssuanceMethod.USER_UPLOADED
+        )
 
-    /**
-     * 파일 업로드 (사용자 직접 업로드)
-     */
-    @PostMapping("/{id}/upload")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    fun uploadFile(
-        @PathVariable id: Long,
-        @RequestBody request: UploadFileRequest
-    ) {
-        // 실패 케이스: 서류를 찾을 수 없음
-        if (id == 9999L) {
-            throw DocumentNotFoundException(DocumentId(id))
-        }
+        // 2. 즉시 파일 업로드
+        documentIssuanceService.uploadFile(
+            documentId = documentId,
+            fileUrl = request.fileUrl
+        )
 
-        // 성공 케이스: 204 No Content
+        return CreateDocumentResponse(documentId = documentId.value)
     }
 
     /**
@@ -64,48 +62,19 @@ class DocumentController {
     fun getDocument(
         @PathVariable id: Long
     ): DocumentResponse {
-        // 실패 케이스: 서류를 찾을 수 없음
-        if (id == 9999L) {
-            throw DocumentNotFoundException(DocumentId(id))
-        }
+        val document = documentIssuanceService.getDocument(DocumentId(id))
 
-        // 성공 케이스: 서류 정보 반환
         return DocumentResponse(
-            id = id,
-            consentId = 100L,
-            memberId = 200L,
-            documentType = com.github.psyoung16.delivery.domain.document.DocumentType.RESIDENT_REGISTRATION,
-            issuanceMethod = com.github.psyoung16.delivery.domain.document.IssuanceMethod.API_ISSUED,
-            status = DocumentStatus.COMPLETED,
-            fileUrl = "https://external-api.com/documents/issued-123.pdf",
-            failureReason = null,
-            failureType = null
+            id = document.id.value,
+            consentId = document.consentId().value,
+            memberId = document.memberId().value,
+            documentType = document.documentType(),
+            issuanceMethod = document.issuanceMethod(),
+            status = document.status(),
+            fileUrl = document.fileUrl(),
+            failureReason = document.failureReason(),
+            failureType = document.failureType()
         )
-    }
-
-    /**
-     * 2차 인증 후 재시도
-     */
-    @PostMapping("/{id}/retry")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    fun retryAfterAuth(
-        @PathVariable id: Long,
-        @RequestBody request: RetryRequest
-    ) {
-        // 실패 케이스: 서류를 찾을 수 없음
-        if (id == 9999L) {
-            throw DocumentNotFoundException(DocumentId(id))
-        }
-
-        // 실패 케이스: 잘못된 상태
-        if (request.authToken == "INVALID_STATE") {
-            throw InvalidDocumentStateException(
-                currentStatus = DocumentStatus.COMPLETED,
-                expectedStatus = DocumentStatus.TWO_WAY_AUTH_REQUIRED
-            )
-        }
-
-        // 성공 케이스: 204 No Content
     }
 
     /**

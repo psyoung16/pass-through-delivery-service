@@ -74,6 +74,61 @@ data class Document(
         }
     }
 
+    /**
+     * ConsentId 조회 (첫 번째 DocumentRequested 이벤트에서 추출)
+     */
+    fun consentId(): ConsentId {
+        return events.filterIsInstance<DocumentRequested>().first().consentId
+    }
+
+    /**
+     * MemberId 조회 (첫 번째 DocumentRequested 이벤트에서 추출)
+     */
+    fun memberId(): MemberId {
+        return events.filterIsInstance<DocumentRequested>().first().memberId
+    }
+
+    /**
+     * DocumentType 조회 (첫 번째 DocumentRequested 이벤트에서 추출)
+     */
+    fun documentType(): DocumentType {
+        return events.filterIsInstance<DocumentRequested>().first().documentType
+    }
+
+    /**
+     * IssuanceMethod 조회 (첫 번째 DocumentRequested 이벤트에서 추출)
+     */
+    fun issuanceMethod(): IssuanceMethod {
+        return events.filterIsInstance<DocumentRequested>().first().issuanceMethod
+    }
+
+    /**
+     * FileUrl 조회 (마지막 DocumentUploaded 또는 DocumentIssued 이벤트에서 추출)
+     */
+    fun fileUrl(): String? {
+        return events.reversed().firstNotNullOfOrNull { event ->
+            when (event) {
+                is DocumentUploaded -> event.fileUrl
+                is DocumentIssued -> event.fileUrl
+                else -> null
+            }
+        }
+    }
+
+    /**
+     * Failure Reason 조회 (마지막 DocumentIssueFailed 이벤트에서 추출)
+     */
+    fun failureReason(): String? {
+        return events.filterIsInstance<DocumentIssueFailed>().lastOrNull()?.reason
+    }
+
+    /**
+     * Failure Type 조회 (마지막 DocumentIssueFailed 이벤트에서 추출)
+     */
+    fun failureType(): FailureType? {
+        return events.filterIsInstance<DocumentIssueFailed>().lastOrNull()?.failureType
+    }
+
     // ========== 비즈니스 로직 (커맨드) ==========
 
     /**

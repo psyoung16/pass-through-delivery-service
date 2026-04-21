@@ -1,14 +1,13 @@
 package com.github.psyoung16.delivery.presentation.dto
 
 import com.github.psyoung16.delivery.domain.document.DocumentType
-import com.github.psyoung16.delivery.domain.document.IssuanceMethod
 
 /**
- * 서류 발급 요청 Request DTO
+ * 사용자 직접 업로드 요청 (원샷)
  */
-data class RequestDocumentRequest(
+data class UploadDocumentRequest(
     val consentId: Long,
     val memberId: Long,
     val documentType: DocumentType,
-    val issuanceMethod: IssuanceMethod
+    val fileUrl: String
 )
