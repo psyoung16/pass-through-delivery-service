@@ -29,6 +29,8 @@ dependencies {
 	testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
 	testImplementation("io.kotest:kotest-runner-junit5:6.0.7")
 	testImplementation("io.kotest:kotest-extensions-spring:6.0.7")
+	testImplementation("io.mockk:mockk:1.13.12")
+	testImplementation("com.ninja-squad:springmockk:4.0.2")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
