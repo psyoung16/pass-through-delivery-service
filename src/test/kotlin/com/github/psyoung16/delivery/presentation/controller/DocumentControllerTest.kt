@@ -23,7 +23,8 @@ import org.springframework.test.web.servlet.post
 @ApplyExtension(SpringExtension::class)
 class DocumentControllerTest(
     val mockMvc: MockMvc,
-    @MockkBean val documentIssuanceService: DocumentIssuanceService
+    @MockkBean val documentIssuanceService: DocumentIssuanceService,
+    @MockkBean val externalApiClient: com.github.psyoung16.delivery.infrastructure.external.ExternalApiClient
 ) : DescribeSpec({
 
     describe("POST /api/documents/upload") {
@@ -81,6 +82,10 @@ class DocumentControllerTest(
                 } returns documentId
 
                 every {
+                    externalApiClient.requestEasyAuth(any(), any(), any(), any())
+                } returns "mock-tx-123"
+
+                every {
                     documentIssuanceService.requireTwoWayAuth(documentId, any())
                 } returns Unit
 
@@ -117,6 +122,10 @@ class DocumentControllerTest(
                 every {
                     documentIssuanceService.retryProcessing(documentId)
                 } returns Unit
+
+                every {
+                    externalApiClient.issueDocument(any())
+                } returns "https://external-api.com/documents/issued-123.pdf"
 
                 every {
                     documentIssuanceService.issueDocument(documentId, any())

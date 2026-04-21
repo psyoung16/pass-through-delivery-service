@@ -3,7 +3,13 @@ package com.github.psyoung16.delivery.presentation.controller
 import com.github.psyoung16.delivery.application.service.DocumentIssuanceService
 import com.github.psyoung16.delivery.domain.consent.ConsentId
 import com.github.psyoung16.delivery.domain.document.DocumentId
+import com.github.psyoung16.delivery.domain.document.IssuanceMethod
 import com.github.psyoung16.delivery.domain.member.MemberId
+import com.github.psyoung16.delivery.infrastructure.external.ExternalApiClient
+import com.github.psyoung16.delivery.presentation.dto.ApiIssuanceRequest
+import com.github.psyoung16.delivery.presentation.dto.ApiIssuanceResponse
+import com.github.psyoung16.delivery.presentation.dto.CompleteIssuanceRequest
+import com.github.psyoung16.delivery.presentation.dto.CompleteIssuanceResponse
 import com.github.psyoung16.delivery.presentation.dto.CreateDocumentResponse
 import com.github.psyoung16.delivery.presentation.dto.DocumentResponse
 import com.github.psyoung16.delivery.presentation.dto.UploadDocumentRequest
@@ -26,7 +32,8 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 @RequestMapping("/api/documents")
 class DocumentController(
-    private val documentIssuanceService: DocumentIssuanceService
+    private val documentIssuanceService: DocumentIssuanceService,
+    private val externalApiClient: ExternalApiClient
 ) {
 
     /**
@@ -42,7 +49,7 @@ class DocumentController(
             consentId = ConsentId(request.consentId),
             memberId = MemberId(request.memberId),
             documentType = request.documentType,
-            issuanceMethod = com.github.psyoung16.delivery.domain.document.IssuanceMethod.USER_UPLOADED
+            issuanceMethod = IssuanceMethod.USER_UPLOADED
         )
 
         // 2. 즉시 파일 업로드
@@ -62,24 +69,28 @@ class DocumentController(
     @PostMapping("/issuance")
     @ResponseStatus(HttpStatus.CREATED)
     fun requestApiIssuance(
-        @RequestBody request: com.github.psyoung16.delivery.presentation.dto.ApiIssuanceRequest
-    ): com.github.psyoung16.delivery.presentation.dto.ApiIssuanceResponse {
-        // TODO: Service 메서드 호출 (ExternalApiClient 사용)
+        @RequestBody request: ApiIssuanceRequest
+    ): ApiIssuanceResponse {
         // 1. Document 생성
         val documentId = documentIssuanceService.requestDocument(
             consentId = ConsentId(request.consentId),
             memberId = MemberId(request.memberId),
             documentType = request.documentType,
-            issuanceMethod = com.github.psyoung16.delivery.domain.document.IssuanceMethod.API_ISSUED
+            issuanceMethod = IssuanceMethod.API_ISSUED
         )
 
-        // 2. 외부 API에 간편인증 요청 (Mock)
-        val requestId = "ext-request-${System.currentTimeMillis()}"
+        // 2. 외부 API에 간편인증 요청
+        val requestId = externalApiClient.requestEasyAuth(
+            userName = request.userName,
+            phoneNo = request.phoneNo,
+            identity = request.identity,
+            easyAuthMethod = request.easyAuthMethod
+        )
 
         // 3. TwoWayAuthRequired 이벤트 발행
         documentIssuanceService.requireTwoWayAuth(documentId, "${request.easyAuthMethod} 인증 필요")
 
-        return com.github.psyoung16.delivery.presentation.dto.ApiIssuanceResponse(
+        return ApiIssuanceResponse(
             documentId = documentId.value,
             status = "TWO_WAY_AUTH_REQUIRED",
             requestId = requestId,
@@ -94,19 +105,18 @@ class DocumentController(
     @ResponseStatus(HttpStatus.OK)
     fun completeIssuance(
         @PathVariable id: Long,
-        @RequestBody request: com.github.psyoung16.delivery.presentation.dto.CompleteIssuanceRequest
-    ): com.github.psyoung16.delivery.presentation.dto.CompleteIssuanceResponse {
-        // TODO: Service 메서드 호출 (ExternalApiClient 사용)
+        @RequestBody request: CompleteIssuanceRequest
+    ): CompleteIssuanceResponse {
         // 1. 재시도 이벤트 발행
         documentIssuanceService.retryProcessing(DocumentId(id))
 
-        // 2. 외부 API에 실제 발급 요청 (Mock)
-        val fileUrl = "https://external-api.com/documents/issued-${System.currentTimeMillis()}.pdf"
+        // 2. 외부 API에 실제 발급 요청
+        val fileUrl = externalApiClient.issueDocument(request.requestId)
 
         // 3. 발급 완료 이벤트 발행
         documentIssuanceService.issueDocument(DocumentId(id), fileUrl)
 
-        return com.github.psyoung16.delivery.presentation.dto.CompleteIssuanceResponse(
+        return CompleteIssuanceResponse(
             status = "COMPLETED",
             fileUrl = fileUrl,
             failureReason = null
