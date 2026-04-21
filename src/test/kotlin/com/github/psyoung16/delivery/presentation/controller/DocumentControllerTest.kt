@@ -13,6 +13,7 @@ import io.kotest.core.extensions.ApplyExtension
 import io.kotest.core.spec.style.DescribeSpec
 import io.kotest.extensions.spring.SpringExtension
 import io.mockk.every
+import io.mockk.justRun
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
@@ -23,8 +24,7 @@ import org.springframework.test.web.servlet.post
 @ApplyExtension(SpringExtension::class)
 class DocumentControllerTest(
     val mockMvc: MockMvc,
-    @MockkBean val documentIssuanceService: DocumentIssuanceService,
-    @MockkBean val externalApiClient: com.github.psyoung16.delivery.infrastructure.external.ExternalApiClient
+    @MockkBean val documentIssuanceService: DocumentIssuanceService
 ) : DescribeSpec({
 
     describe("POST /api/documents/upload") {
@@ -82,12 +82,14 @@ class DocumentControllerTest(
                 } returns documentId
 
                 every {
-                    externalApiClient.requestEasyAuth(any(), any(), any(), any())
+                    documentIssuanceService.requestApiIssuanceWithAuth(
+                        documentId = documentId,
+                        userName = "홍길동",
+                        phoneNo = "01012345678",
+                        identity = "encrypted-ssn",
+                        easyAuthMethod = "KAKAO"
+                    )
                 } returns "mock-tx-123"
-
-                every {
-                    documentIssuanceService.requireTwoWayAuth(documentId, any())
-                } returns Unit
 
                 // when & then
                 mockMvc.post("/api/documents/issuance") {
@@ -107,7 +109,7 @@ class DocumentControllerTest(
                     status { isCreated() }
                     jsonPath("$.documentId") { value(1) }
                     jsonPath("$.status") { value("TWO_WAY_AUTH_REQUIRED") }
-                    jsonPath("$.requestId") { exists() }
+                    jsonPath("$.requestId") { value("mock-tx-123") }
                     jsonPath("$.message") { value("KAKAO 인증을 진행해주세요") }
                 }
             }
@@ -115,21 +117,13 @@ class DocumentControllerTest(
     }
 
     describe("POST /api/documents/{id}/complete") {
-        context("2-way 인증 완료 후 실제 발급 시") {
-            it("200 OK 응답, COMPLETED 상태 반환") {
+        context("2-way 인증 완료 후 실제 발급 시 (Pass-Through 비동기)") {
+            it("202 Accepted 응답, PROCESSING 상태 반환") {
                 // given
                 val documentId = DocumentId(1L)
-                every {
-                    documentIssuanceService.retryProcessing(documentId)
-                } returns Unit
-
-                every {
-                    externalApiClient.issueDocument(any())
-                } returns "https://external-api.com/documents/issued-123.pdf"
-
-                every {
-                    documentIssuanceService.issueDocument(documentId, any())
-                } returns Unit
+                justRun {
+                    documentIssuanceService.startIssuanceAsync(documentId, "ext-request-123")
+                }
 
                 // when & then
                 mockMvc.post("/api/documents/1/complete") {
@@ -140,9 +134,9 @@ class DocumentControllerTest(
                         }
                     """.trimIndent()
                 }.andExpect {
-                    status { isOk() }
-                    jsonPath("$.status") { value("COMPLETED") }
-                    jsonPath("$.fileUrl") { exists() }
+                    status { isAccepted() }
+                    jsonPath("$.status") { value("PROCESSING") }
+                    jsonPath("$.fileUrl") { doesNotExist() }
                     jsonPath("$.failureReason") { doesNotExist() }
                 }
             }

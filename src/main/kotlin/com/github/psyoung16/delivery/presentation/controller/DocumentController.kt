@@ -5,7 +5,6 @@ import com.github.psyoung16.delivery.domain.consent.ConsentId
 import com.github.psyoung16.delivery.domain.document.DocumentId
 import com.github.psyoung16.delivery.domain.document.IssuanceMethod
 import com.github.psyoung16.delivery.domain.member.MemberId
-import com.github.psyoung16.delivery.infrastructure.external.ExternalApiClient
 import com.github.psyoung16.delivery.presentation.dto.ApiIssuanceRequest
 import com.github.psyoung16.delivery.presentation.dto.ApiIssuanceResponse
 import com.github.psyoung16.delivery.presentation.dto.CompleteIssuanceRequest
@@ -32,8 +31,7 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 @RequestMapping("/api/documents")
 class DocumentController(
-    private val documentIssuanceService: DocumentIssuanceService,
-    private val externalApiClient: ExternalApiClient
+    private val documentIssuanceService: DocumentIssuanceService
 ) {
 
     /**
@@ -79,16 +77,14 @@ class DocumentController(
             issuanceMethod = IssuanceMethod.API_ISSUED
         )
 
-        // 2. 외부 API에 간편인증 요청
-        val requestId = externalApiClient.requestEasyAuth(
+        // 2. 외부 API에 간편인증 요청 및 TwoWayAuth 이벤트 발행
+        val requestId = documentIssuanceService.requestApiIssuanceWithAuth(
+            documentId = documentId,
             userName = request.userName,
             phoneNo = request.phoneNo,
             identity = request.identity,
             easyAuthMethod = request.easyAuthMethod
         )
-
-        // 3. TwoWayAuthRequired 이벤트 발행
-        documentIssuanceService.requireTwoWayAuth(documentId, "${request.easyAuthMethod} 인증 필요")
 
         return ApiIssuanceResponse(
             documentId = documentId.value,
@@ -99,26 +95,25 @@ class DocumentController(
     }
 
     /**
-     * 2-way 인증 완료 후 실제 발급
+     * 2-way 인증 완료 후 실제 발급 (Pass-Through 비동기)
+     *
+     * 즉시 응답하고, 백그라운드에서 10초~3분 걸리는 발급 작업 수행
+     * 사용자는 GET /api/documents/{id}로 폴링하여 결과 확인
      */
     @PostMapping("/{id}/complete")
-    @ResponseStatus(HttpStatus.OK)
+    @ResponseStatus(HttpStatus.ACCEPTED)
     fun completeIssuance(
         @PathVariable id: Long,
         @RequestBody request: CompleteIssuanceRequest
     ): CompleteIssuanceResponse {
-        // 1. 재시도 이벤트 발행
-        documentIssuanceService.retryProcessing(DocumentId(id))
 
-        // 2. 외부 API에 실제 발급 요청
-        val fileUrl = externalApiClient.issueDocument(request.requestId)
+        // 비동기로 발급 시작 (10초~3분 소요, 백그라운드 실행)
+        documentIssuanceService.startIssuanceAsync(DocumentId(id), request.requestId)
 
-        // 3. 발급 완료 이벤트 발행
-        documentIssuanceService.issueDocument(DocumentId(id), fileUrl)
-
+        // 즉시 응답 (사용자는 기다리지 않음)
         return CompleteIssuanceResponse(
-            status = "COMPLETED",
-            fileUrl = fileUrl,
+            status = "PROCESSING",
+            fileUrl = null,
             failureReason = null
         )
     }
